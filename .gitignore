@@ -1,0 +1,50 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# ---- 运行时数据（不应提交）----
+console/data/
+!console/data/.gitkeep
+*.log
+logs/
+
+# ---- 部署产物 ----
+deploy/payload/
+deploy/windows/OpenSSH-Win64/
+deploy/windows/OpenSSH-Win32/
+*.zip
+*.7z
+
+# ---- 二进制 ----
+*.exe
+*.dll
+*.sys
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 用户本地配置（可能含真实地址）----
+deploy/heartbeat-target.txt
+!deploy/heartbeat-target.txt.example
+
+# ---- 台账备份（含真实机器信息）----
+*registry*.json
+!console/data/.gitkeep
+
+# ---- 临时诊断脚本 ----
+_*.ps1
+_*.py
