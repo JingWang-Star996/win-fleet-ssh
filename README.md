@@ -173,10 +173,12 @@ win-fleet-ssh/
 ├── tools/
 │   ├── diagnose/                     诊断脚本
 │   └── repair/                       修复脚本
-└── docs/
-    ├── PITFALLS.md                   踩坑记录（最有价值的部分）
-    ├── ARCHITECTURE.md               设计说明
-    └── CONFIG.md                     配置项参考
+├── docs/
+│   ├── PITFALLS.md                   踩坑记录（最有价值的部分）
+│   ├── ARCHITECTURE.md               设计说明
+│   └── CONFIG.md                     配置项参考
+└── benchmarks/
+    └── 2026-11-10-cluster-bench/     10 台集群实测：算力分布、收集策略、掉线容错
 ```
 
 ## 部署流程（10 步）

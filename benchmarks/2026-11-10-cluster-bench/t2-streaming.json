@@ -1,0 +1,101 @@
+{
+  "test": "T2-streaming-vs-batch",
+  "steps": 25000000,
+  "recordedAt": "2026-11-10T01:12:23+08:00",
+  "tFirst": 30.07,
+  "t90": 42.08,
+  "tAll": 44.64,
+  "extraWaitFromSlowest": 2.56,
+  "timeline": [
+    {
+      "hostname": "OFFCE-PC-SEVER",
+      "ok": true,
+      "error": "",
+      "computeMs": 27773.9,
+      "stepsPerSecond": 900125,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618",
+      "completedAtSec": 30.07
+    },
+    {
+      "hostname": "SHA1381",
+      "ok": true,
+      "error": "",
+      "computeMs": 34035.3,
+      "stepsPerSecond": 734531,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618",
+      "completedAtSec": 36.61
+    },
+    {
+      "hostname": "SHA1427",
+      "ok": true,
+      "error": "",
+      "computeMs": 34415.4,
+      "stepsPerSecond": 726420,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618",
+      "completedAtSec": 37.09
+    },
+    {
+      "hostname": "SHA1111",
+      "ok": true,
+      "error": "",
+      "computeMs": 34653.5,
+      "stepsPerSecond": 721429,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618",
+      "completedAtSec": 37.18
+    },
+    {
+      "hostname": "SHA1264",
+      "ok": true,
+      "error": "",
+      "computeMs": 34841.6,
+      "stepsPerSecond": 717534,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618",
+      "completedAtSec": 37.85
+    },
+    {
+      "hostname": "SHA1444",
+      "ok": true,
+      "error": "",
+      "computeMs": 35652.6,
+      "stepsPerSecond": 701211,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618",
+      "completedAtSec": 38.43
+    },
+    {
+      "hostname": "SHA1121",
+      "ok": true,
+      "error": "",
+      "computeMs": 35949.8,
+      "stepsPerSecond": 695414,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618",
+      "completedAtSec": 38.62
+    },
+    {
+      "hostname": "SHA1436",
+      "ok": true,
+      "error": "",
+      "computeMs": 36101.8,
+      "stepsPerSecond": 692486,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618",
+      "completedAtSec": 39.03
+    },
+    {
+      "hostname": "SHA1222",
+      "ok": true,
+      "error": "",
+      "computeMs": 39437,
+      "stepsPerSecond": 633923,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618",
+      "completedAtSec": 42.08
+    },
+    {
+      "hostname": "SHA1084",
+      "ok": true,
+      "error": "",
+      "computeMs": 41860.2,
+      "stepsPerSecond": 597226,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618",
+      "completedAtSec": 44.64
+    }
+  ]
+}

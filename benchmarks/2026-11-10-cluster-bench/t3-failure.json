@@ -1,0 +1,123 @@
+{
+  "test": "T3-dynamic-node-failure",
+  "steps": 25000000,
+  "killAt": 12.0,
+  "killTargets": [
+    "SHA1111",
+    "SHA1444"
+  ],
+  "restartAt": 20.0,
+  "restartTarget": "SHA1111",
+  "recordedAt": "2026-11-10T01:13:32+08:00",
+  "success": 8,
+  "failed": 2,
+  "unplannedFailures": 0,
+  "hashGroups": {
+    "d961bff31074": [
+      "OFFCE-PC-SEVER",
+      "SHA1084",
+      "SHA1121",
+      "SHA1222",
+      "SHA1264",
+      "SHA1381",
+      "SHA1427",
+      "SHA1436"
+    ]
+  },
+  "nodes": [
+    {
+      "hostname": "OFFCE-PC-SEVER",
+      "ok": true,
+      "error": "",
+      "killed": false,
+      "completedAtSec": 30.26,
+      "computeMs": 27926,
+      "stepsPerSecond": 895222,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618"
+    },
+    {
+      "hostname": "SHA1084",
+      "ok": true,
+      "error": "",
+      "killed": false,
+      "completedAtSec": 43.1,
+      "computeMs": 40250.6,
+      "stepsPerSecond": 621109,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618"
+    },
+    {
+      "hostname": "SHA1111",
+      "ok": false,
+      "error": "无输出",
+      "killed": true,
+      "completedAtSec": 14.01
+    },
+    {
+      "hostname": "SHA1121",
+      "ok": true,
+      "error": "",
+      "killed": false,
+      "completedAtSec": 37.93,
+      "computeMs": 35402.6,
+      "stepsPerSecond": 706162,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618"
+    },
+    {
+      "hostname": "SHA1222",
+      "ok": true,
+      "error": "",
+      "killed": false,
+      "completedAtSec": 42.18,
+      "computeMs": 39470.3,
+      "stepsPerSecond": 633388,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618"
+    },
+    {
+      "hostname": "SHA1264",
+      "ok": true,
+      "error": "",
+      "killed": false,
+      "completedAtSec": 38.65,
+      "computeMs": 35679.1,
+      "stepsPerSecond": 700691,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618"
+    },
+    {
+      "hostname": "SHA1381",
+      "ok": true,
+      "error": "",
+      "killed": false,
+      "completedAtSec": 36.7,
+      "computeMs": 34010.9,
+      "stepsPerSecond": 735059,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618"
+    },
+    {
+      "hostname": "SHA1427",
+      "ok": true,
+      "error": "",
+      "killed": false,
+      "completedAtSec": 37.3,
+      "computeMs": 34662.3,
+      "stepsPerSecond": 721245,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618"
+    },
+    {
+      "hostname": "SHA1436",
+      "ok": true,
+      "error": "",
+      "killed": false,
+      "completedAtSec": 38.55,
+      "computeMs": 35633.1,
+      "stepsPerSecond": 701594,
+      "resultHash": "d961bff310746c829e9c224047d51491169c2766f468eb024292b7fe60ec8618"
+    },
+    {
+      "hostname": "SHA1444",
+      "ok": false,
+      "error": "无输出",
+      "killed": true,
+      "completedAtSec": 15.57
+    }
+  ]
+}

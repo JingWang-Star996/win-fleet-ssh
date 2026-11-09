@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-10T01:10:00+08:00",
+  "note": "节点能力注册表。SA 本身没有这个概念，这是我们为测试新建的一层。C 方案靠它做能力路由。",
+  "nodes": {
+    "workstation-01": {
+      "host": "127.0.0.1",
+      "role": "orchestrator",
+      "capabilities": ["orchestrate", "image", "video", "summarize"],
+      "cpu": "AMD Ryzen 5 5600X",
+      "cores": 12,
+      "models": ["skyunion-deepseek", "skyunion-glm", "qwen-dashscope"],
+      "maxConcurrent": 3,
+      "notes": "SA 主实例所在机。有图片/视频生成能力，负责编排与汇总。"
+    },
+    "OFFCE-PC-SEVER": {
+      "host": "192.0.2.229",
+      "role": "aggregator",
+      "capabilities": ["compute", "summarize", "report"],
+      "cpu": "AMD Ryzen 5 5600X",
+      "cores": 12,
+      "models": ["skyunion-deepseek"],
+      "maxConcurrent": 2,
+      "notes": "备用 SA 所在机（3092）。经代理访问 GitHub。"
+    },
+    "SHA1264": {
+      "host": "192.0.2.37",
+      "role": "developer",
+      "capabilities": ["compute", "code", "review"],
+      "cpu": "Intel i5-10600K",
+      "cores": 12,
+      "models": ["skyunion-deepseek"],
+      "maxConcurrent": 2,
+      "notes": "开发机。分配代码类任务。"
+    },
+    "SHA1084": {
+      "host": "192.0.2.32",
+      "role": "worker",
+      "capabilities": ["compute"],
+      "cpu": "AMD Ryzen 7 3700X",
+      "cores": 16,
+      "models": ["skyunion-deepseek"],
+      "maxConcurrent": 1,
+      "notes": "算力节点。"
+    },
+    "SHA1111": {
+      "host": "192.0.2.127",
+      "role": "worker",
+      "capabilities": ["compute"],
+      "cpu": "unknown",
+      "cores": 0,
+      "models": ["skyunion-deepseek"],
+      "maxConcurrent": 1,
+      "notes": "算力节点。"
+    },
+    "SHA1121": {
+      "host": "192.0.2.193",
+      "role": "worker",
+      "capabilities": ["compute"],
+      "cpu": "unknown",
+      "cores": 0,
+      "models": ["skyunion-deepseek"],
+      "maxConcurrent": 1,
+      "notes": "算力节点。"
+    },
+    "SHA1222": {
+      "host": "192.0.2.150",
+      "role": "worker",
+      "capabilities": ["compute"],
+      "cpu": "AMD Ryzen 7 3700X",
+      "cores": 16,
+      "models": ["skyunion-deepseek"],
+      "maxConcurrent": 1,
+      "notes": "算力节点。"
+    },
+    "SHA1381": {
+      "host": "192.0.2.187",
+      "role": "worker",
+      "capabilities": ["compute"],
+      "cpu": "unknown",
+      "cores": 0,
+      "models": ["skyunion-deepseek"],
+      "maxConcurrent": 1,
+      "notes": "算力节点。"
+    },
+    "SHA1427": {
+      "host": "192.0.2.166",
+      "role": "worker",
+      "capabilities": ["compute"],
+      "cpu": "unknown",
+      "cores": 0,
+      "models": ["skyunion-deepseek"],
+      "maxConcurrent": 1,
+      "notes": "算力节点。"
+    },
+    "SHA1436": {
+      "host": "192.0.2.111",
+      "role": "worker",
+      "capabilities": ["compute"],
+      "cpu": "Intel i5-10600KF",
+      "cores": 12,
+      "models": ["skyunion-deepseek"],
+      "maxConcurrent": 1,
+      "notes": "算力节点。"
+    },
+    "SHA1444": {
+      "host": "192.0.2.192",
+      "role": "worker",
+      "capabilities": ["compute"],
+      "cpu": "unknown",
+      "cores": 0,
+      "models": ["skyunion-deepseek"],
+      "maxConcurrent": 1,
+      "notes": "算力节点。"
+    }
+  }
+}
