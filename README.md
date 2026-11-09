@@ -1,8 +1,18 @@
 # win-fleet-ssh
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-blue)](https://github.com/JingWang-Star996/win-fleet-ssh)
+[![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue)](https://github.com/JingWang-Star996/win-fleet-ssh)
+[![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://github.com/JingWang-Star996/win-fleet-ssh)
+
 Windows 主机批量 SSH 部署框架。一条命令完成多台 Windows 机器的 SSH 服务部署、开机自启配置、健康监控与集中管理。
 
 面向「有一批 Windows 机器，想统一管起来」的场景：算力机、测试机、小规模服务器集群。
+
+> **如果你只读一部分，请读 [docs/PITFALLS.md](docs/PITFALLS.md)。**
+> 那里记录了 18 个真实踩过的问题，包括两次导致 SSH 完全失联的事故。
+> 这些问题大多不会在文档里出现，只会在实际部署时咬你一口。
+
 
 ## 它解决什么问题
 
