@@ -11,11 +11,27 @@ SSH / TCP 探测。
 """
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 from dataclasses import dataclass, field
 
 SSH_EXE = r"C:\Windows\System32\OpenSSH\ssh.exe"
+
+# Windows 下 ssh.exe 是控制台程序。不屏蔽的话，每次探测都会新建一个
+# 黑色控制台窗口，用户看到的就是一闪一闪的黑框。
+# 这两个常量必须用在每一处 subprocess 调用上。
+CREATE_NO_WINDOW = 0x08000000
+
+
+def _no_window_kwargs() -> dict:
+    """给 subprocess 用的无窗口参数。非 Windows 上返回空字典。"""
+    if os.name != "nt":
+        return {}
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0  # SW_HIDE
+    return {"creationflags": CREATE_NO_WINDOW, "startupinfo": si}
 
 
 @dataclass
@@ -119,7 +135,8 @@ def probe(host: str, port: int = 22, user: str = "", timeout: float = 8.0,
             "echo __OK__; hostname; whoami",
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=25,
-                              encoding="utf-8", errors="replace")
+                              encoding="utf-8", errors="replace",
+                              **_no_window_kwargs())
         out = (proc.stdout or "") + (proc.stderr or "")
 
         if "__OK__" in out:
@@ -175,7 +192,8 @@ def run_remote(host: str, port: int, user: str, command: str,
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                              encoding="utf-8", errors="replace")
+                              encoding="utf-8", errors="replace",
+                              **_no_window_kwargs())
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
     except subprocess.TimeoutExpired:
         return -1, "命令超时"

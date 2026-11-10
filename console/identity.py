@@ -1,5 +1,5 @@
-﻿# -*- coding: utf-8 -*-
-"""
+# -*- coding: utf-8 -*-
+r"""
 机器身份解析（identity）
 
 问题：目标机的 IP 每次重启都可能变（DHCP / 不同网段 / UU 隧道）。
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import socket
 import subprocess
@@ -33,12 +34,28 @@ from typing import Any
 
 SSH_EXE = r"C:\Windows\System32\OpenSSH\ssh.exe"
 
+# Windows 下 ssh.exe 是控制台程序。不屏蔽的话每次调用都会新建一个黑色
+# 控制台窗口，用户看到的就是一闪一闪的黑框。本模块所有外部命令都经
+# _run()，所以在这里统一屏蔽即可。
+CREATE_NO_WINDOW = 0x08000000
+
+
+def _no_window_kwargs() -> dict:
+    """给 subprocess 用的无窗口参数；非 Windows 返回空字典。"""
+    if os.name != "nt":
+        return {}
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0  # SW_HIDE
+    return {"creationflags": CREATE_NO_WINDOW, "startupinfo": si}
+
 
 # ---------------------------------------------------------------- 采集
 def _run(cmd: list[str], timeout: int = 20) -> str:
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                           encoding="utf-8", errors="replace")
+                           encoding="utf-8", errors="replace",
+                           **_no_window_kwargs())
         return (p.stdout or "") + (p.stderr or "")
     except Exception:
         return ""
@@ -128,7 +145,8 @@ def collect_remote(host: str, port: int, user: str, timeout: int = 25) -> dict[s
     ]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 10,
-                           encoding="utf-8", errors="replace")
+                           encoding="utf-8", errors="replace",
+                           **_no_window_kwargs())
         out = (p.stdout or "")
 
         info: dict[str, Any] = {
@@ -194,7 +212,7 @@ def make_id(info: dict[str, Any]) -> str:
     # 关键：GUID + MAC 组合
     # ============================================================
     # 2026-11-06 踩的坑：用同一个系统镜像克隆出来的机器，
-    # MachineGuid 完全相同（NODE-01 和 NODE-02 都是 8ebba3f3-...），
+    # MachineGuid 完全相同（SHA1264 和 SHA1436 都是 8ebba3f3-...），
     # 只按 GUID 算会导致机器码撞车，登记时互相覆盖。
     #
     # 实测四台机器：GUID 有两台相同，但 MAC 各不相同。

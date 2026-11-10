@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import agentchat
+import benchdist
 import identity
 import heartbeat
 import probe
@@ -143,11 +145,15 @@ class FleetConsole(tk.Tk):
 
         # 机器码短号放在最前，因为它是主键
         cols = ("code", "hostname", "addr", "os", "role", "deployed", "status", "owner", "project")
+        # 列宽按内容定：系统的 Caption 是 "Microsoft Windows 11 企业版 LTSC"
+        # 这种长度，75px 只能显示到 "Microsoft 1"，看起来像数据缺失，
+        # 实际是截断。这里给足宽度，并把职能/责任人/项目留窄
+        # （心跳不上报这三项，需要人工填）。
         heads = {
             "code":     ("机器码",   160),
             "hostname": ("主机名",   130),
             "addr":     ("当前地址", 175),
-            "os":       ("系统",      75),
+            "os":       ("系统",     215),
             "role":     ("职能",      90),
             "deployed": ("本套件",    70),
             "status":   ("状态",     155),
@@ -205,6 +211,8 @@ class FleetConsole(tk.Tk):
         self._build_detail_tab()
         self._build_address_tab()
         self._build_audit_tab()
+        self._build_chat_tab()
+        self._build_bench_tab()
 
     def _build_detail_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=14)
@@ -325,6 +333,374 @@ class FleetConsole(tk.Tk):
         self.audit.tag_configure("ok", foreground=OK_GREEN)
         self.audit.tag_configure("err", foreground=ERR_RED)
         self.audit.tag_configure("act", foreground=ACCENT)
+
+    # ------------------------------------------------------------ 对话
+    def _build_chat_tab(self) -> None:
+        """与选中机器上的 DSH 对话：发一句话，拿回结果。
+
+        底层走 agentchat.ask()：ssh 到目标机，用 node 调 dsh headless。
+        目标机必须同时具备 node 与 dsh runtime，否则标签页顶部会提示原因。
+        """
+        tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab, text="对话")
+
+        # 顶部状态条
+        head = ttk.Frame(tab)
+        head.pack(fill="x", pady=(0, 6))
+        self.lbl_chat_target = ttk.Label(head, text="未选择机器", style="Panel.TLabel")
+        self.lbl_chat_target.pack(side="left")
+        self.lbl_chat_state = ttk.Label(head, text="", style="Dim.TLabel")
+        self.lbl_chat_state.pack(side="right")
+
+        # 对话记录
+        wrap = ttk.Frame(tab)
+        wrap.pack(fill="both", expand=True)
+        self.chat_log = tk.Text(wrap, bg=BG_INPUT, fg=FG, bd=0, font=FONT_UI,
+                                wrap="word", padx=10, pady=8, state="disabled",
+                                spacing1=2, spacing3=6)
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=self.chat_log.yview)
+        self.chat_log.configure(yscrollcommand=vsb.set)
+        self.chat_log.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        self.chat_log.tag_configure("me", foreground=ACCENT, font=FONT_BOLD)
+        self.chat_log.tag_configure("bot", foreground=OK_GREEN, font=FONT_BOLD)
+        self.chat_log.tag_configure("body", foreground=FG)
+        self.chat_log.tag_configure("meta", foreground=FG_DIM, font=FONT_SMALL)
+        self.chat_log.tag_configure("err", foreground=ERR_RED)
+        self.chat_log.tag_configure("warn", foreground=WARN_AMBER)
+
+        # 输入区
+        box = ttk.Frame(tab)
+        box.pack(fill="x", pady=(8, 0))
+        self.chat_input = tk.Text(box, bg=BG_INPUT, fg=FG, bd=0, font=FONT_UI,
+                                  height=3, wrap="word", padx=8, pady=6)
+        self.chat_input.pack(fill="x")
+        self.chat_input.bind("<Control-Return>", lambda _e: (self._send_chat(), "break")[1])
+
+        bar = ttk.Frame(box)
+        bar.pack(fill="x", pady=(6, 0))
+        ttk.Label(bar, text="Ctrl+Enter 发送", style="Dim.TLabel").pack(side="left")
+        self.btn_chat_send = ttk.Button(bar, text="发送", style="Accent.TButton",
+                                        command=self._send_chat)
+        self.btn_chat_send.pack(side="right")
+        ttk.Button(bar, text="清空", command=self._clear_chat).pack(side="right", padx=(0, 6))
+
+        self._chat_busy = False
+        self._chat_host: str | None = None
+
+    def _chat_append(self, tag: str, text: str) -> None:
+        self.chat_log.configure(state="normal")
+        self.chat_log.insert("end", text, tag)
+        self.chat_log.configure(state="disabled")
+        self.chat_log.see("end")
+
+    def _clear_chat(self) -> None:
+        self.chat_log.configure(state="normal")
+        self.chat_log.delete("1.0", "end")
+        self.chat_log.configure(state="disabled")
+
+    def _chat_target_host(self) -> str | None:
+        """取当前选中机器的最佳地址。"""
+        m = self.current
+        if not m:
+            return None
+        best = self._best_addr(m)
+        if not best:
+            return None
+        return best.get("host")
+
+    def _refresh_chat_target(self) -> None:
+        """选中机器变化时，刷新对话页的目标与可用性。"""
+        m = self.current
+        if not m:
+            self.lbl_chat_target.configure(text="未选择机器")
+            self.lbl_chat_state.configure(text="")
+            self._chat_host = None
+            return
+
+        host = self._chat_target_host()
+        name = m.get("hostname") or m.get("machineId", "")[:12]
+        self._chat_host = host
+        self.lbl_chat_target.configure(text=f"{name}  {host or '(无地址)'}")
+
+        if not host:
+            self.lbl_chat_state.configure(text="无可用地址", foreground=ERR_RED)
+            return
+
+        # 异步探测，不阻塞界面
+        self.lbl_chat_state.configure(text="探测中…", foreground=FG_DIM)
+
+        def worker() -> None:
+            try:
+                pr = agentchat.probe(host)
+                if not pr.ok:
+                    msg, color = "不可达", ERR_RED
+                elif pr.can_chat:
+                    msg, color = "可对话", OK_GREEN
+                else:
+                    msg, color = f"不可用：{pr.detail}", WARN_AMBER
+            except Exception as e:  # noqa: BLE001
+                msg, color = f"探测失败：{e}", ERR_RED
+            self.after(0, lambda: self.lbl_chat_state.configure(text=msg, foreground=color))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _send_chat(self) -> None:
+        if self._chat_busy:
+            return
+        text = self.chat_input.get("1.0", "end").strip()
+        if not text:
+            return
+        host = self._chat_host
+        if not host:
+            messagebox.showwarning("无法发送", "请先在左侧选择一台有可用地址的机器。")
+            return
+
+        self.chat_input.delete("1.0", "end")
+        self._chat_append("me", "我\n")
+        self._chat_append("body", text + "\n")
+
+        self._chat_busy = True
+        self.btn_chat_send.configure(state="disabled")
+        self.lbl_chat_state.configure(text="执行中…", foreground=WARN_AMBER)
+        self._chat_append("meta", "  · 已发送，等待目标机执行…\n\n")
+        self.chat_log.see("end")
+
+        def worker() -> None:
+            try:
+                ok, body, secs = agentchat.ask(host, text)
+            except Exception as e:  # noqa: BLE001
+                ok, body, secs = False, f"异常：{e}", 0.0
+            self.after(0, lambda: self._chat_done(ok, body, secs))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _chat_done(self, ok: bool, body: str, secs: float) -> None:
+        self._chat_busy = False
+        self.btn_chat_send.configure(state="normal")
+
+        if ok:
+            self._chat_append("bot", "机器\n")
+            self._chat_append("body", body + "\n")
+            self._chat_append("meta", f"  · 用时 {secs:.1f}s\n\n")
+            self.lbl_chat_state.configure(text=f"完成 {secs:.1f}s", foreground=OK_GREEN)
+        else:
+            self._chat_append("err", "失败\n")
+            self._chat_append("err", body + "\n\n")
+            self.lbl_chat_state.configure(text="失败", foreground=ERR_RED)
+
+        self.chat_log.see("end")
+
+    # ------------------------------------------------------------ 压测
+    def _build_bench_tab(self) -> None:
+        """分布式压测：把所有机器拉进同一个任务里并发跑。
+
+        不是各测各的——每台分到 nonce 空间里互不重叠的一片，
+        合起来才是完整搜索。这样量出来的并行效率才有意义。
+        """
+        tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab, text="压测")
+
+        # 参数
+        cfg = ttk.Frame(tab)
+        cfg.pack(fill="x", pady=(0, 8))
+
+        ttk.Label(cfg, text="时长", style="Panel.TLabel").pack(side="left")
+        self.var_bench_dur = tk.StringVar(value="30")
+        ttk.Entry(cfg, textvariable=self.var_bench_dur, width=6).pack(side="left", padx=(6, 14))
+
+        ttk.Label(cfg, text="难度", style="Panel.TLabel").pack(side="left")
+        self.var_bench_diff = tk.StringVar(value="20")
+        ttk.Entry(cfg, textvariable=self.var_bench_diff, width=6).pack(side="left", padx=(6, 6))
+        ttk.Label(cfg, text="位", style="Dim.TLabel").pack(side="left", padx=(0, 14))
+
+        self.btn_bench = ttk.Button(cfg, text="开始压测", style="Accent.TButton",
+                                    command=self._start_bench)
+        self.btn_bench.pack(side="right")
+        ttk.Button(cfg, text="清空", command=self._clear_bench).pack(side="right", padx=(0, 6))
+
+        ttk.Label(tab, text="全部机器参与同一任务：nonce 空间按 stride 交错切分，各自搜索，"
+                            "结果回传后逐条复算校验",
+                  style="Dim.TLabel").pack(fill="x", pady=(0, 8))
+
+        # 结果表
+        cols = ("host", "status", "hashes", "rate", "share", "sols")
+        heads = {
+            "host":   ("机器",    150),
+            "status": ("状态",     70),
+            "hashes": ("哈希数",  120),
+            "rate":   ("速率/s",  110),
+            "share":  ("份额",     70),
+            "sols":   ("解",       50),
+        }
+        wrap = ttk.Frame(tab)
+        wrap.pack(fill="both", expand=True)
+        self.bench_tree = ttk.Treeview(wrap, columns=cols, show="headings", height=7)
+        for c in cols:
+            text, width = heads[c]
+            self.bench_tree.heading(c, text=text, anchor="w")
+            self.bench_tree.column(c, width=width, minwidth=width, anchor="w",
+                                   stretch=(c == "host"))
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=self.bench_tree.yview)
+        self.bench_tree.configure(yscrollcommand=vsb.set)
+        self.bench_tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+        self.bench_tree.tag_configure("ok", foreground=OK_GREEN)
+        self.bench_tree.tag_configure("err", foreground=ERR_RED)
+
+        # 汇总
+        self.bench_summary = tk.Text(tab, bg=BG_INPUT, fg=FG, bd=0, font=FONT_MONO,
+                                     height=9, wrap="word", padx=10, pady=8, state="disabled")
+        self.bench_summary.pack(fill="x", pady=(10, 0))
+        self.bench_summary.tag_configure("key", foreground=FG_DIM)
+        self.bench_summary.tag_configure("val", foreground=FG)
+        self.bench_summary.tag_configure("good", foreground=OK_GREEN)
+        self.bench_summary.tag_configure("warn", foreground=WARN_AMBER)
+        self.bench_summary.tag_configure("err", foreground=ERR_RED)
+
+        # 进度
+        self.lbl_bench_state = ttk.Label(tab, text="就绪", style="Dim.TLabel")
+        self.lbl_bench_state.pack(fill="x", pady=(6, 0))
+
+        self._bench_busy = False
+
+    def _bench_write(self, text: str, tag: str = "val") -> None:
+        self.bench_summary.configure(state="normal")
+        self.bench_summary.insert("end", text, tag)
+        self.bench_summary.configure(state="disabled")
+
+    def _clear_bench(self) -> None:
+        self.bench_tree.delete(*self.bench_tree.get_children())
+        self.bench_summary.configure(state="normal")
+        self.bench_summary.delete("1.0", "end")
+        self.bench_summary.configure(state="disabled")
+        self.lbl_bench_state.configure(text="就绪")
+
+    def _machines_for_bench(self) -> list[dict]:
+        """取出有地址的机器，转成压测需要的形状。"""
+        out: list[dict] = []
+        for key, m in (self.data.get("machines") or {}).items():
+            if not isinstance(m, dict):
+                continue
+            best = self._best_addr(m)
+            if not best:
+                continue
+            host = best.get("host")
+            if not host:
+                continue
+            out.append({
+                "name": m.get("hostname") or str(m.get("machineId", ""))[:12],
+                "host": host,
+            })
+        return out
+
+    def _start_bench(self) -> None:
+        if self._bench_busy:
+            return
+
+        try:
+            dur = int(self.var_bench_dur.get().strip())
+            diff = int(self.var_bench_diff.get().strip())
+        except ValueError:
+            messagebox.showwarning("参数错误", "时长与难度必须是整数。")
+            return
+        if dur < 5 or dur > 600:
+            messagebox.showwarning("参数错误", "时长建议 5–600 秒。")
+            return
+        if diff < 16 or diff > 32:
+            messagebox.showwarning("参数错误", "难度建议 16–32 位。")
+            return
+
+        machines = self._machines_for_bench()
+        if not machines:
+            messagebox.showwarning("没有可用的机器", "台账里没有带地址的机器。")
+            return
+
+        if not messagebox.askyesno(
+                "开始压测",
+                f"将让 {len(machines)} 台机器同时跑 {dur} 秒满负载任务。\n"
+                f"期间这些机器会接近满载，确认现在没有其他任务在用？"):
+            return
+
+        self._clear_bench()
+        self._bench_busy = True
+        self.btn_bench.configure(state="disabled")
+        self.lbl_bench_state.configure(text="运行中…")
+        self._bench_write(f"任务：SHA-256 搜索，≥{diff} 位前导零，{dur} 秒\n", "key")
+        self._bench_write(f"分片：{len(machines)} 台 stride 交错，互不重叠\n\n", "key")
+
+        def progress(msg: str) -> None:
+            self.after(0, lambda: self.lbl_bench_state.configure(text=msg))
+
+        def worker() -> None:
+            try:
+                report = benchdist.run_bench(machines, dur, diff, progress=progress)
+            except Exception as e:  # noqa: BLE001
+                self.after(0, lambda: self._bench_done(None, str(e)))
+                return
+            self.after(0, lambda: self._bench_done(report, None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _bench_done(self, report, error: str | None) -> None:
+        self._bench_busy = False
+        self.btn_bench.configure(state="normal")
+
+        if error or report is None:
+            self.lbl_bench_state.configure(text="失败")
+            self._bench_write(f"\n压测失败：{error}\n", "err")
+            return
+
+        total = report.total_hashes
+        for w in sorted(report.workers, key=lambda x: -x.rate):
+            share = (w.hashes / total * 100) if total else 0
+            if w.ok:
+                self.bench_tree.insert("", "end", tags=("ok",), values=(
+                    w.name, "完成", f"{w.hashes:,}", f"{w.rate:,.0f}",
+                    f"{share:.1f}%", str(len(w.solutions))))
+            else:
+                self.bench_tree.insert("", "end", tags=("err",), values=(
+                    w.name, "失败", "-", "-", "-", w.error[:30]))
+
+        self._bench_write("\n汇总\n", "key")
+        self._bench_write("─" * 46 + "\n", "key")
+
+        def row(label: str, value: str, tag: str = "val") -> None:
+            self._bench_write(f"{label:<14}", "key")
+            self._bench_write(f"{value}\n", tag)
+
+        row("参与机器", f"{len(report.good)} / {len(report.workers)}")
+        row("总哈希", f"{total:,}")
+        row("墙钟时间", f"{report.wall_seconds:.1f}s")
+        row("聚合速率", f"{report.aggregate_rate:,.0f} /s")
+
+        n = len(report.good)
+        if n:
+            sp = report.speedup
+            eff = report.efficiency
+            tag = "good" if eff >= 90 else ("warn" if eff >= 70 else "err")
+            row("加速比", f"{sp:.2f}x  (理想 {n}.00x)", tag)
+            row("并行效率", f"{eff:.1f}%", tag)
+
+        row("找到解", str(len(report.solutions)))
+        row("无效解", str(report.invalid), "good" if report.invalid == 0 else "err")
+
+        # 解明细
+        if report.solutions:
+            self._bench_write("\n解明细（已独立复算）\n", "key")
+            for s in sorted(report.solutions, key=lambda x: x["nonce"])[:12]:
+                mark = "✓" if s["valid"] else "✗"
+                tag = "good" if s["valid"] else "err"
+                self._bench_write(
+                    f"  {mark} nonce={s['nonce']:<12} {s['zeros']}位  {s['from']}\n", tag)
+            if len(report.solutions) > 12:
+                self._bench_write(f"  … 另有 {len(report.solutions) - 12} 个\n", "key")
+
+        ok_all = report.invalid == 0 and report.good
+        self.lbl_bench_state.configure(
+            text="完成" if ok_all else "完成（有失败项）")
+        self.bench_summary.see("end")
 
     # ------------------------------------------------------------ 表格
     def _refresh_table(self) -> None:
@@ -520,6 +896,90 @@ class FleetConsole(tk.Tk):
             for ln in traceback.format_exc().splitlines()[-6:]:
                 dbg(f"  {ln}")
 
+    def _looks_like_host(self, h: str) -> bool:
+        """判断字符串是否像一个可用的地址（IPv4 / IPv6 / 主机名）。
+
+        存在的意义：历史上台账被写入过 host='ip'/'alias'/'prefix'
+        这种脏数据（心跳 ips 条目的键名被当成值），8 台机器各 3 条。
+        清理是治标，这里是治本——以后任何格式的上游都写不进来。
+        """
+        h = (h or "").strip()
+        if not h or len(h) > 253:
+            return False
+
+        # 已知的脏值：ips 条目的键名。这些字符串本身符合主机名语法，
+        # 所以必须在语法判断之前拦掉，否则会被当成合法主机名收进来。
+        if h.lower() in {"ip", "alias", "prefix", "host", "port", "kind",
+                         "note", "mac", "none", "null", "undefined"}:
+            return False
+
+        # IPv4
+        parts = h.split(".")
+        if len(parts) == 4:
+            if all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+                return True
+            # 形似 IP 但段位非法（如 300.1.1.1）视为无效
+            if all(p.isdigit() for p in parts):
+                return False
+
+        # IPv6：含冒号且只由十六进制与冒号组成
+        if ":" in h:
+            return bool(re.fullmatch(r"[0-9a-fA-F:]+", h))
+
+        # 主机名：字母数字加 . 或 -，且不以分隔符开头结尾
+        return bool(re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9.\-]*[A-Za-z0-9])?", h))
+
+    # ------------------------------------------------------------ 心跳补字段
+    def _infer_role(self, hostname: str) -> str:
+        """按主机名推断职能。
+
+        保守原则：只认明确的命名约定，认不出就返回空字符串（显示 "—"），
+        不要瞎猜一个看起来合理的值——那会让台账变成猜测的集合。
+
+        用户 2026-11-10 明确：
+            「只有 1475 和 1595 是主力，其他的都是算力机。」
+        所以默认档是「算力机」，主力机必须靠台账显式标记，
+        不能靠主机名猜（1475/1595 与 SHA#### 无法从名字区分）。
+        """
+        h = (hostname or "").upper()
+        if not h:
+            return ""
+        # 主力机只能人工指定：名字里没有可靠特征
+        if h in {"SHA1475", "SHA1595"}:
+            return "主力机"
+        # 其余一律算力机（用户已明确整个机房只有两台主力）
+        return "算力机"
+
+    def _common_project(self) -> str:
+        """沿用台账里出现次数最多的项目名。
+
+        新发现的机器通常和已有机器同属一个项目，直接留空会让它们
+        在按项目筛选时消失。取众数比取第一个更稳。
+        """
+        counts: dict[str, int] = {}
+        for m in (self.data.get("machines") or {}).values():
+            if not isinstance(m, dict):
+                continue
+            p = (m.get("project") or "").strip()
+            if p:
+                counts[p] = counts.get(p, 0) + 1
+        if not counts:
+            return ""
+        return max(counts.items(), key=lambda kv: kv[1])[0]
+
+    def _common_owner(self) -> str:
+        """沿用台账里出现次数最多的责任人。逻辑同 _common_project。"""
+        counts: dict[str, int] = {}
+        for m in (self.data.get("machines") or {}).values():
+            if not isinstance(m, dict):
+                continue
+            o = (m.get("owner") or "").strip()
+            if o:
+                counts[o] = counts.get(o, 0) + 1
+        if not counts:
+            return ""
+        return max(counts.items(), key=lambda kv: kv[1])[0]
+
     def _apply_heartbeat_inner(self, payload: dict, dbg) -> None:
         ident = payload.get("identity") or {}
         dbg(f"ident keys={list(ident.keys())} guid={ident.get('machineGuid','')[:8]}")
@@ -590,19 +1050,44 @@ class FleetConsole(tk.Tk):
         if payload.get("sshOk"):
             rec["deployed"] = True
 
+        # 补齐心跳能推断但不上报的字段。
+        # 只填「空着的」——绝不覆盖人工填过的值。
+        # 这三项原本永远是空，列表里一排 "—" 看不出机器是否真在干活，
+        # 也分不清哪台是算力机、哪台是办公机。
+        if not rec.get("role"):
+            rec["role"] = self._infer_role(payload.get("hostname", ""))
+        if not rec.get("project"):
+            # 同一批机器通常属于同一项目，沿用已有记录的项目名
+            rec["project"] = self._common_project()
+        if not rec.get("owner"):
+            rec["owner"] = self._common_owner()
+
         # 把所有上报的 IP 加进地址簿
+        #
+        # 防御说明：历史上这里曾把 ips 条目的「键名」当成地址写进台账，
+        # 产生 host='ip'/'alias'/'prefix' 这种脏记录（8 台机器 × 3 条）。
+        # 根因是早期版本没从 dict 里取值。现在补一道校验，
+        # 无论上游格式怎么变都不会再写进非地址字符串。
         port = int(payload.get("sshPort") or 22)
         added = 0
         for item in payload.get("ips", []) or []:
-            ip = (item.get("ip") if isinstance(item, dict) else str(item)) or ""
-            if not ip or ip.startswith("127.") or ip.startswith("169.254."):
+            ip = ""
+            note = ""
+            if isinstance(item, dict):
+                ip = item.get("ip") or ""
+                note = item.get("alias") or ""
+            else:
+                ip = str(item or "")
+            ip = ip.strip()
+            if not self._looks_like_host(ip):
+                continue
+            if ip.startswith("127.") or ip.startswith("169.254."):
                 continue
             kind = "tailscale" if ip.startswith("100.") else "lan"
             before = len(rec.get("addresses") or [])
             registry.touch_address(
                 data, mid, ip, port,
-                ok=bool(payload.get("sshOk")), kind=kind,
-                note=item.get("alias", "") if isinstance(item, dict) else "")
+                ok=bool(payload.get("sshOk")), kind=kind, note=note)
             rec2 = registry.find_by_id(data, mid)
             if rec2 and len(rec2.get("addresses") or []) > before:
                 added += 1
@@ -633,6 +1118,7 @@ class FleetConsole(tk.Tk):
         self._load_to_form(m)
         self._refresh_addresses()
         self._refresh_audit()
+        self._refresh_chat_target()
         self._dirty = False
 
     def _load_to_form(self, m: dict) -> None:
