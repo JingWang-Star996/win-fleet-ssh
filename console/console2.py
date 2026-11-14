@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import threading
+import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ import agentchat
 import benchdist
 import identity
 import heartbeat
+import metrics
 import probe
 import registry2 as registry
 
@@ -63,6 +65,13 @@ class FleetConsole(tk.Tk):
         self._dirty = False
         self._probing: set[str] = set()
 
+        # 实时指标（CPU/内存/GPU），后台采集，不阻塞界面
+        self._metrics: dict = {}
+        self._metrics_busy = False
+        self._metrics_last = 0.0
+        self._metrics_pending = False   # 首轮是否还在采（决定显示「…」还是「—」）
+        self._metrics_hosts: set = set()  # 本轮待采主机，用于区分排队中与已失败
+
         # 心跳接收端：目标机主动上报，解决 IP 漂移
         self.hb = heartbeat.HeartbeatServer(port=heartbeat.DEFAULT_PORT,
                                             on_update=self._on_heartbeat)
@@ -75,6 +84,8 @@ class FleetConsole(tk.Tk):
         self._refresh_table()
         self._refresh_audit()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # 启动实时指标采集（CPU/内存/GPU），10 秒一轮
+        self.after(1500, self._tick_metrics)
 
     # ------------------------------------------------------------ 样式
     def _build_style(self) -> None:
@@ -144,7 +155,8 @@ class FleetConsole(tk.Tk):
         left.pack(side="left", fill="both", expand=True)
 
         # 机器码短号放在最前，因为它是主键
-        cols = ("code", "hostname", "addr", "os", "role", "deployed", "status", "owner", "project")
+        cols = ("code", "hostname", "addr", "os", "role", "deployed",
+                "status", "cpu", "mem", "gpu", "owner", "project")
         # 列宽按内容定：系统的 Caption 是 "Microsoft Windows 11 企业版 LTSC"
         # 这种长度，75px 只能显示到 "Microsoft 1"，看起来像数据缺失，
         # 实际是截断。这里给足宽度，并把职能/责任人/项目留窄
@@ -157,6 +169,9 @@ class FleetConsole(tk.Tk):
             "role":     ("职能",      90),
             "deployed": ("本套件",    70),
             "status":   ("状态",     155),
+            "cpu":      ("CPU",       60),
+            "mem":      ("内存",      90),
+            "gpu":      ("GPU",       95),
             "owner":    ("责任人",    80),
             "project":  ("项目",      70),
         }
@@ -702,12 +717,126 @@ class FleetConsole(tk.Tk):
             text="完成" if ok_all else "完成（有失败项）")
         self.bench_summary.see("end")
 
+    # ------------------------------------------------------- 实时指标
+    def _tick_metrics(self) -> None:
+        """定时触发指标采集（后台线程，不阻塞界面）。"""
+        try:
+            if not self._metrics_busy:
+                self._metrics_busy = True
+                t = threading.Thread(target=self._collect_metrics,
+                                     daemon=True)
+                t.start()
+                self._threads.append(t)
+        except Exception:
+            self._metrics_busy = False
+        # 轮询间隔：采集本身串行约 15s（12 台），留足余量避免堆积。
+        # _metrics_busy 仍会挡住重叠触发，这里只是让节奏更合理。
+        self.after(20_000, self._tick_metrics)
+
+    def _collect_metrics(self) -> None:
+        """后台采集所有在线机器的 CPU/内存/GPU。
+
+        ## 为什么必须串行（workers=1）而不是并发
+
+        实测（Tk mainloop 运行时，12 台在线节点）：
+
+            workers=1    14.5s   成功 12/12
+            workers=2    78.1s   成功  1/12   ← 并发直接崩塌
+            workers=12   15.0s   成功  1-5/12
+
+        同样的采集在**没有 Tk** 的纯命令行下 workers=12 只要 1.4s 且全成。
+        也就是说：Tk 进程里并发创建多个 ssh.exe 子进程会被严重拖慢，
+        握手排队到超时。这是 Windows 下 GUI 进程创建子进程的开销问题，
+        Python 侧换线程/换子进程隔离都绕不过去。
+
+        串行 14.5s 虽慢，但 12 台全部成功——正确性优先于速度。
+        配合下面的渐进式刷新，用户 1~2 秒就能看到第一批数据，
+        不必等满 14 秒。
+        """
+        try:
+            hosts = []
+            for m in registry.all_machines(self.data):
+                host = ""
+                # 优先 onlineAddress（通常是内网 IP，最快）
+                addr = m.get("onlineAddress") or ""
+                host = addr.split(":")[0].strip()
+                if not host:
+                    # 退到 best_address，但它可能给 Tailscale（慢）
+                    b = self._best_addr(m)
+                    host = (b or {}).get("host", "")
+                if host:
+                    hosts.append(host)
+            hosts = list(dict.fromkeys(hosts))
+            if not hosts:
+                return
+
+            # 标记本轮已开始，避免首屏被误判成「采集失败」
+            self._metrics_pending = True
+            # 记录本轮要采的 host 集合：_refresh_table 用它判断
+            # 「这台是排队中（显示 …）」还是「本轮已结束但没数据（显示 —）」
+            self._metrics_hosts = set(hosts)
+            _last = [0.0]
+
+            def _repaint() -> None:
+                _last[0] = time.time()
+                try:
+                    self.after(0, self._refresh_table)
+                except Exception:
+                    pass        # 窗口已关
+
+            def _partial(h: str, r: dict) -> None:
+                # 合并而非替换：保留上一轮其它机器的值，避免闪烁成 —
+                self._metrics[h] = r
+                # 节流：最多每 0.4s 重画一次
+                now = time.time()
+                if now - _last[0] >= 0.4:
+                    _repaint()
+
+            # ★ 串行采集。并发在 Tk 进程里会导致超时（见上方实测数据）
+            res = metrics.collect_many(hosts, workers=1,
+                                       timeout=8.0, on_partial=_partial)
+            self._metrics = res
+            self._metrics_last = time.time()
+            # 落盘留历史，便于事后看趋势（每轮一条，最多 500 条）
+            metrics.save_history(res)
+            # 收尾必刷一次，保证节流窗口内被跳过的结果也上屏
+            _repaint()
+        except Exception as e:
+            self._hb_msg = f"指标采集失败 {type(e).__name__}"
+        finally:
+            self._metrics_pending = False
+            self._metrics_busy = False
+
     # ------------------------------------------------------------ 表格
     def _refresh_table(self) -> None:
         sel = self.current.get("machineId") if self.current else None
         self.tree.delete(*self.tree.get_children())
 
         machines = registry.all_machines(self.data)
+        met = getattr(self, "_metrics", {}) or {}
+
+        def m_of(mid: str, addr: str) -> dict:
+            """按 machineId 或地址取指标。
+
+            三种状态要区分开，否则用户无法判断该不该等：
+              {}                  —— 采集已结束，这台确实没数据（显示 —）
+              {"_pending": True}  —— 本轮还在采集，稍候即有（显示 …）
+              {"err": ...}        —— 采集失败，主机不可达（显示 —）
+            """
+            if mid in met:
+                return met[mid]
+            host = (addr or "").split(":")[0].strip()
+            got = met.get(host)
+            if got:
+                return got
+
+            # 该机在本轮 host 列表里、且本轮还没结束 → 排队中
+            pending_hosts = getattr(self, "_metrics_hosts", None) or ()
+            if (getattr(self, "_metrics_pending", False)
+                    and host in pending_hosts):
+                return {"_pending": True}
+            return {}
+
         for m in machines:
             mid = m.get("machineId", "")
             status, tag = self._status_cell(m)
@@ -726,6 +855,9 @@ class FleetConsole(tk.Tk):
                                  m.get("role", "") or "—",
                                  "已部署" if m.get("deployed") else "未部署",
                                  status,
+                                 metrics.fmt_cpu(m_of(mid, addr)),
+                                 metrics.fmt_mem(m_of(mid, addr)),
+                                 metrics.fmt_gpu(m_of(mid, addr)),
                                  m.get("owner", "") or "—",
                                  m.get("project", "") or "—",
                              ), tags=(tag,))

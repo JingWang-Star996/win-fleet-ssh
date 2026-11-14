@@ -10,6 +10,7 @@ Windows 算力集群的图形控制台。Tkinter 单文件 GUI，无需额外依
 |---|---|
 | 不知道哪些机器在线 | 可达性探测 + 心跳状态 |
 | 想知道某台的配置 | 自动采集 CPU/内存/磁盘/系统 |
+| 想知道哪台在忙 | 表格实时显示 CPU/内存/GPU 占用（每 20s 一轮） |
 | 想在某台上执行命令 | 内置命令分发，支持批量 |
 | 想用远端算力跑 LLM | 对话面板，把 prompt 送到目标机的 dsh |
 | 想跑分布式任务 | 基准测试面板，一键分发并收集 |
@@ -21,6 +22,7 @@ Windows 算力集群的图形控制台。Tkinter 单文件 GUI，无需额外依
 | `console2.py` | 主程序，Tkinter GUI |
 | `registry2.py` | 机器台账（读写 `data/registry.json`） |
 | `probe.py` | 可达性与环境探测 |
+| `metrics.py` | 实时指标采集（CPU/内存/GPU） |
 | `identity.py` | 机器码生成与识别 |
 | `heartbeat.py` | 心跳接收服务 |
 | `agentchat.py` | 与远端 dsh 对话 |
@@ -58,6 +60,7 @@ python console2.py
 ```
 data/
 ├── registry.json     机器台账（本文件不入库，含真实 IP）
+├── metrics-history.json  指标历史（每轮一条，最多 500 条）
 ├── bench-a/          基准测试结果
 └── backups/          台账自动备份
 ```
@@ -65,6 +68,29 @@ data/
 `data/` 是运行产物，**不纳入版本控制**。结构参考 `data/registry.sample.json`。
 
 ## 关键实现说明
+
+### 实时指标采集（metrics.py）
+
+表格中的 CPU / 内存 / GPU 三列由 `metrics.py` 采集，每 20 秒一轮、后台线程执行，
+不阻塞界面。三条约束：
+
+1. **必须串行采集（`workers=1`）**。在 Tk 进程里并发创建多个 `ssh.exe`
+   子进程会被严重拖慢：12 台节点下 `workers=2` 成功 1/12（78s），
+   `workers=1` 成功 12/12（14.5s）。同样代码在没有 Tk 的命令行下
+   `workers=12` 只需 1.4s。这是 Windows GUI 进程创建子进程的开销问题，
+   换线程或换子进程隔离都绕不过去。串行虽慢，但正确性优先。
+
+2. **CPU 不能用 `Get-Counter` 单次采样**（首次返回 0），改用 WMI 的
+   `Win32_PerfFormattedData_PerfOS_Processor`，它自带平均，首采即有值。
+
+3. **内存单位是 KB**。`TotalVisibleMemorySize` / `FreePhysicalMemory`
+   返回 KB，需除两次 1024 才是 GB；只除一次会显示成「9646/65436G」。
+
+GPU 走 `nvidia-smi`，路径必须用绝对路径 `C:\Windows\System32\nvidia-smi.exe`
+（它不在 PATH 里）。无显卡的机器显示「无」。
+
+采集结果每轮追加到 `data/metrics-history.json`（最多保留 500 条），
+便于事后回看异常从什么时候开始。该文件属运行产物，不入库。
 
 ### 与远端 dsh 对话（agentchat.py）
 

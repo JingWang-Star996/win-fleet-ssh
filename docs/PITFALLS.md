@@ -488,6 +488,65 @@ schtasks /run /tn "TaskName"
 
 ---
 
+### 19. Tk 进程里并发起 ssh.exe，采集会集体超时
+
+**现象**
+
+控制台新增的 CPU/内存/GPU 采集，在多线程并发模式下几乎全失败，
+但同样的采集代码放到命令行直接跑，快得离谱。
+
+**实测数据**（12 台在线节点，Tk mainloop 运行中）
+
+| 并发数 | 耗时 | 成功 |
+|---|---|---|
+| `workers=1` | 14.5s | 12/12 |
+| `workers=2` | 78.1s | 1/12 |
+| `workers=12` | 15.0s | 1~5/12 |
+
+同样的采集在**没有 Tk** 的纯命令行下，`workers=12` 只要 1.4s 且全部成功。
+
+**原因**
+
+Windows 下 GUI 进程创建子进程有额外开销。Tk mainloop 占着消息循环，
+`ssh.exe` 的握手被排队拖慢，最终撞上超时。换 Python 线程、换子进程隔离
+都绕不过去——瓶颈在进程创建，不在 Python 调度。
+
+**解法**
+
+- 在 GUI 进程里**串行采集**（`workers=1`），用正确性换速度
+- 配合**渐进式刷新**：每采到一台就回调重绘（节流 0.4s），
+  用户 1~2 秒就能看到第一批数据，不必等满 14 秒
+- 批量采集逻辑放在 GUI 之外（如独立脚本或服务）时，恢复并发即可
+
+**附带坑：`_pending` 与 `err` 必须区分**
+
+首轮采集时表格是空的，如果统一显示「—」，用户会误判成「这些机器都采不到」。
+用三种状态区分：`{}` 已结束但无数据、`{"_pending": True}` 排队中显示「…」、
+`{"err": ...}` 采集失败。用户才能判断该不该等。
+
+---
+
+### 20. 性能计数器与 nvidia-smi 的两个小坑
+
+**CPU 首采为 0**
+
+`Get-Counter '\Processor(_Total)\% Processor Time'` 单次采样首次返回 0，
+因为它是增量计数器，需要两次采样才有差值。改用 WMI 的
+`Win32_PerfFormattedData_PerfOS_Processor`，它自带平均，首采即有值。
+
+**内存单位是 KB 不是 Byte**
+
+`Win32_OperatingSystem` 的 `TotalVisibleMemorySize` / `FreePhysicalMemory`
+单位是 **KB**。转 GB 要除两次 1024，只除一次会显示成「9646/65436G」。
+
+**nvidia-smi 不在 PATH 里**
+
+SSH 非交互会话下 `nvidia-smi` 常常找不到，必须用绝对路径
+`C:\Windows\System32\nvidia-smi.exe`，并且先 `Test-Path` 判存在，
+否则无显卡的机器会报错而不是显示「无」。
+
+---
+
 ## 附录：排查顺序建议
 
 遇到「部署后连不上」，按这个顺序查：
